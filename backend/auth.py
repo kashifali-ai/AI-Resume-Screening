@@ -74,6 +74,9 @@ class UserStore:
         self.users[email.strip().lower()] = hash_password(password)
         self._save()
 
+    def has_user(self, email: str) -> bool:
+        return (email or "").strip().lower() in self.users
+
     def verify(self, email: str, password: str) -> bool:
         stored = self.users.get((email or "").strip().lower())
         return bool(stored) and verify_password(password, stored)

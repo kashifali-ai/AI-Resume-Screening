@@ -53,6 +53,24 @@ _JD_HEADERS = {
 
 _BULLET_RE = re.compile(r"^[\-\*•●▪‣⁃∙●▪◦·•\s]+")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
+# Inline cue phrases that introduce a skill list in prose JDs/resumes, e.g.
+# "experience with Python, Java and FastAPI" or "proficiency in SQL".
+_CUE_RE = re.compile(
+    r"\b(?:experience (?:with|in|using)|proficien(?:t|cy) (?:in|with)|"
+    r"knowledge of|familiar(?:ity)? with|expertise in|skilled in|skills? (?:in|with)|"
+    r"strong (?:in|with)|background in|hands[- ]on (?:with|in)|"
+    r"working knowledge of|competen(?:t|cy) (?:in|with)|build(?:ing)? with|"
+    r"developed (?:in|with)|using)\b",
+    re.I,
+)
+# Tokens that are clearly NOT skills (requirement sentences, education lines, …).
+_NOISE_RE = re.compile(
+    r"\b(years?|experience|require[sd]?|responsib\w*|degree|bachelor'?s?|"
+    r"master'?s?|ph\.?d|ability|able to|including|etc|join|team|looking|"
+    r"candidate|role|we are|you (?:should|will|have))\b",
+    re.I,
+)
 _DATE_RANGE_RE = re.compile(
     r"((?:19|20)\d{2})\s*(?:[-–—]|to)\s*((?:19|20)\d{2}|present|current|now|ongoing)",
     re.I,
@@ -108,22 +126,53 @@ def _split_sections(text: str, header_map: dict[str, list[str]]) -> dict[str, li
     return sections
 
 
+def _dedup(items: list[str]) -> list[str]:
+    seen, out = set(), []
+    for x in items:
+        k = x.strip().lower()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(x.strip())
+    return out
+
+
 def _skill_tokens(lines: list[str]) -> list[str]:
-    """Split skill/technology lines into individual skill phrases.
+    """Split clean skill/technology section lines into individual skill phrases.
 
     Splits on commas, semicolons and pipes only — multiword skills like
-    'REST APIs', 'Data Structures and Algorithms' or 'CI/CD' stay intact."""
-    seen, out = set(), []
+    'REST APIs', 'Data Structures and Algorithms' or 'CI/CD' stay intact.
+    Requirement-sentence noise ('5+ years of experience') is dropped."""
+    out = []
     for line in lines:
         for part in re.split(r"[,;|]", _strip_bullet(line)):
             p = part.strip().strip(".").strip()
-            if not p or len(p.split()) > 7:
+            if not p or len(p.split()) > 7 or _NOISE_RE.search(p):
                 continue
-            key = p.lower()
-            if key not in seen:
-                seen.add(key)
-                out.append(p)
+            out.append(p)
+    return _dedup(out)
+
+
+def _split_skill_list(segment: str) -> list[str]:
+    """Split a free-text fragment (e.g. a cue-phrase tail) into skills,
+    breaking on commas/semicolons/pipes AND conjunctions (and/or/&)."""
+    out = []
+    for part in re.split(r",|;|\||&|\band\b|\bor\b", segment, flags=re.I):
+        p = _strip_bullet(part).strip(" .").strip()
+        # Trim trailing filler clauses: "Docker is expected" -> "Docker".
+        p = re.sub(r"\s+(?:is|are|would be|will be|a)\b.*$", "", p, flags=re.I).strip()
+        if p and len(p.split()) <= 6 and not _NOISE_RE.search(p):
+            out.append(p)
     return out
+
+
+def _cue_skills(text: str) -> list[str]:
+    """Extract skills from inline cue phrases anywhere in the text, e.g.
+    'experience with Python, Java and FastAPI' -> [Python, Java, FastAPI]."""
+    out = []
+    for m in _CUE_RE.finditer(text):
+        segment = re.split(r"[.;\n]", text[m.end():], maxsplit=1)[0]
+        out += _split_skill_list(segment)
+    return _dedup(out)
 
 
 def _clean_lines(lines: list[str]) -> list[str]:
@@ -177,6 +226,10 @@ def extract_resume(resume_text: str) -> dict:
 
     skills = _skill_tokens(sec.get("skills", []))
     technologies = _skill_tokens(sec.get("technologies", []))
+    # Fallback for resumes without a clean Skills section: mine inline cues
+    # ("experience with…", "built … using …") from the whole resume.
+    if not skills and not technologies:
+        skills = _cue_skills(resume_text)
 
     email_m = _EMAIL_RE.search(resume_text)
     summary = " ".join(_clean_lines(sec.get("summary", [])))[:400]
@@ -225,6 +278,16 @@ def extract_requirements(jd_text: str) -> dict:
     required = _skill_tokens(sec.get("required", []))
     preferred = _skill_tokens(sec.get("preferred", []))
     technologies = _skill_tokens(sec.get("technologies", []))
+
+    # Robustness: most real JDs are prose without a 'Required skills:' header.
+    # Mine inline cue phrases across the whole JD; anything found that isn't
+    # already a preferred/technology term is treated as required. This is what
+    # prevents prose JDs from producing an empty requirement list (and thus
+    # all-zero scores).
+    known = {s.lower() for s in preferred + technologies}
+    cue = [s for s in _cue_skills(jd_text) if s.lower() not in known]
+    required = _dedup(required + cue)
+
     min_exp, max_exp = _parse_experience_requirement(jd_text)
 
     education = _clean_lines(sec.get("education", []))

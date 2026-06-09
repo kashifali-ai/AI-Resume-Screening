@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sign in — JobFit</title>
+  <title>Create account — JobFit</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 text-slate-800
@@ -11,10 +11,10 @@
   <main class="w-full max-w-sm">
     <div class="text-center mb-6">
       <h1 class="text-3xl font-bold text-slate-900">Job<span class="text-indigo-600">Fit</span></h1>
-      <p class="text-slate-500 mt-1 text-sm">Sign in to screen resumes against any job description.</p>
+      <p class="text-slate-500 mt-1 text-sm">Create an account to get started.</p>
     </div>
 
-    <form id="loginForm" novalidate class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4">
+    <form id="registerForm" novalidate class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4">
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1" for="email">Email</label>
         <input id="email" type="email" autocomplete="username" required
@@ -27,10 +27,10 @@
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1" for="password">Password</label>
         <div class="relative">
-          <input id="password" type="password" autocomplete="current-password" required
+          <input id="password" type="password" autocomplete="new-password" required
             class="w-full rounded-xl border border-slate-200 p-3 pr-11 text-sm
                    focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            placeholder="••••••••" />
+            placeholder="At least 6 characters" />
           <button type="button" class="pw-toggle absolute right-2 top-1/2 -translate-y-1/2
                   text-slate-400 hover:text-slate-600 p-1" data-target="password"
                   aria-label="Show password"></button>
@@ -38,10 +38,24 @@
         <p data-err="password" class="hidden text-xs text-rose-600 mt-1"></p>
       </div>
 
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1" for="confirm">Confirm password</label>
+        <div class="relative">
+          <input id="confirm" type="password" autocomplete="new-password" required
+            class="w-full rounded-xl border border-slate-200 p-3 pr-11 text-sm
+                   focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            placeholder="Re-enter password" />
+          <button type="button" class="pw-toggle absolute right-2 top-1/2 -translate-y-1/2
+                  text-slate-400 hover:text-slate-600 p-1" data-target="confirm"
+                  aria-label="Show password"></button>
+        </div>
+        <p data-err="confirm" class="hidden text-xs text-rose-600 mt-1"></p>
+      </div>
+
       <button id="submitBtn" type="submit"
         class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl
                transition disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-        <span id="btnLabel">Sign in</span>
+        <span id="btnLabel">Create account</span>
         <span id="spinner" class="hidden w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>
       </button>
 
@@ -49,38 +63,41 @@
     </form>
 
     <p class="mt-4 text-center text-sm text-slate-500">
-      Don't have an account?
-      <a href="/register" class="text-indigo-600 font-medium hover:underline">Create one</a>
+      Already have an account?
+      <a href="/login" class="text-indigo-600 font-medium hover:underline">Sign in</a>
     </p>
   </main>
 
   <script src="/static/auth.js"></script>
   <script>
+    const MIN_PW = 6;
     initPasswordToggles();
-    const form = $("loginForm"), submitBtn = $("submitBtn");
+    const form = $("registerForm");
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       clearErrors();
       const email = $("email").value.trim();
       const password = $("password").value;
+      const confirm = $("confirm").value;
 
       let ok = true;
       if (!isValidEmail(email)) { fieldError("email", "Enter a valid email address."); ok = false; }
-      if (!password) { fieldError("password", "Enter your password."); ok = false; }
+      if (password.length < MIN_PW) { fieldError("password", `Use at least ${MIN_PW} characters.`); ok = false; }
+      if (confirm !== password) { fieldError("confirm", "Passwords do not match."); ok = false; }
       if (!ok) return;
 
-      setLoading(true);
+      setLoading(true, "Creating…");
       try {
-        const res = await postForm("/api/auth/login", { email, password });
-        if (res.status === 401) throw new Error("Incorrect email or password.");
+        const res = await postForm("/api/auth/register", { email, password });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || "Sign in failed. Please try again.");
-        window.location.href = "/";
+        if (res.status === 409) throw new Error("An account with this email already exists.");
+        if (!res.ok) throw new Error(data.detail || "Could not create account. Please try again.");
+        window.location.href = "/";   // auto-logged-in -> dashboard
       } catch (err) {
         formError(err.message);
       } finally {
-        setLoading(false);
+        setLoading(false, "Create account");
       }
     });
   </script>

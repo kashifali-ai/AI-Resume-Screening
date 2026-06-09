@@ -43,19 +43,20 @@ because the requirements are read from the JD, not hardcoded.
 ## Login / authentication
 
 The whole app sits behind a login screen — you must sign in before any screening
-feature is reachable.
+feature is reachable. It supports **multiple users with self-service
+registration**.
 
-**Demo account** (seeded automatically on first run):
-
-| Email | Password |
-|-------|----------|
-| `admin@test.com` | `admin123` |
-
+- **Create an account** at `/register` (email + password, ≥6 chars). You're
+  logged in automatically and sent to the dashboard.
+- **Sign in** at `/login`. Login UX includes a show/hide-password toggle, inline
+  email/password validation, a loading state, and friendly error messages.
 - Visiting any page while logged out redirects to **`/login`**.
-- Sign in with email + password → redirected to the JobFit dashboard, where all
-  features work (single screening, bulk screening, CSV export, MockLLM and Gemini
-  modes).
+- After login all features work: single screening, bulk screening, CSV export,
+  MockLLM and Gemini modes.
 - **Log out** (top-right) clears the session; protected APIs return `401` again.
+
+A demo account `admin@test.com` / `admin123` is seeded on first run for
+convenience (the credentials are intentionally **not** shown on the login page).
 
 **How it works**
 - **Session-based auth** via a signed cookie (Starlette `SessionMiddleware` +
@@ -126,6 +127,15 @@ parsing is confined to *extraction*; skill *matching* is still done by embedding
 in `semantic.py`, never by substring rules.)
 
 **When `MOCK_LLM=false` (default), Gemini is used exactly as before.**
+
+> **Note on extraction quality / "all scores 0".** MockLLM extraction is
+> rule-based. It now handles prose JDs (e.g. *"experience with Python, Java and
+> FastAPI"*) by mining inline cue phrases, not just `Required skills:` headers —
+> so a normal JD yields real, differentiated scores. If a JD still produces zero
+> requirements, the pipeline logs a `[TRACE] … produced ZERO requirements`
+> warning. The pipeline emits `[TRACE]` logs for extracted JD skills, candidate
+> skills, embedding matches, and scoring inputs to make any empty-data point
+> obvious. For messy real-world resumes, Gemini mode remains the most accurate.
 
 | | `MOCK_LLM=true` (mock) | `MOCK_LLM=false` (Gemini) |
 |---|---|---|
@@ -221,6 +231,8 @@ Open http://127.0.0.1:8000 and sign in with the demo account
 All `/api/screen*` endpoints require an authenticated session (else `401`).
 
 ### Auth
+- `POST /api/auth/register` — form `email`, `password` → creates a user
+  (validates email + min length, rejects duplicates with `409`) and logs in.
 - `POST /api/auth/login` — form `email`, `password` → sets session cookie.
 - `POST /api/auth/logout` — clears the session.
 - `GET /api/auth/me` — current user, or `401`.

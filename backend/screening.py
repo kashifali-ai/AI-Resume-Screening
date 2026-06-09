@@ -100,6 +100,17 @@ def get_requirements(
 
     jd = extract_requirements(jd_text, llm, settings)
     requirements = _build_requirements(jd, embedder, settings)
+    log.info(
+        "[TRACE] Extracted JD skills (role=%s): required=%s preferred=%s technologies=%s "
+        "-> %d weighted requirement(s)",
+        jd.role_title, jd.required_skills, jd.preferred_skills, jd.technologies,
+        len(requirements),
+    )
+    if not requirements:
+        log.warning(
+            "[TRACE] JD '%s' produced ZERO requirements — all resumes will score 0. "
+            "Check the job-description text / extraction provider.", jd.role_title,
+        )
     with _jd_cache_lock:
         _jd_cache[key] = (jd, requirements)
     return jd, requirements, False
@@ -133,13 +144,33 @@ def _screen_one(
             "No skill requirements could be extracted from the job description."
         )
 
+    log.info(
+        "[TRACE] Candidate '%s' skills (%d): %s",
+        profile.candidate_name, len(candidate_skills), candidate_skills,
+    )
+
     # Stage 4: semantic skill matching (embeddings).
     matches = match_skills(
         requirements, candidate_skills, embedder, settings.sim_threshold
     )
+    matched_pairs = [
+        f"{m['required']}~{m['matched_to']}({m['similarity']:.2f})"
+        for m in matches if m["matched"]
+    ]
+    log.info(
+        "[TRACE] Embedding matches for '%s': %d/%d matched -> %s",
+        profile.candidate_name, len(matched_pairs), len(matches), matched_pairs,
+    )
 
     # Stage 5: deterministic scoring + verdict (pure Python).
     scored = score(matches, confidence, profile, stuffing_penalty, jd, settings)
+    log.info(
+        "[TRACE] Scoring inputs for '%s': requirements=%d coverage=%.3f "
+        "exp_years=%.1f stuffing=%.2f -> score=%d verdict=%s",
+        profile.candidate_name, len(matches), scored["skill_coverage"],
+        scored["experience_years"], scored["stuffing_penalty"],
+        scored["score"], scored["verdict"],
+    )
 
     # Stage 6: explainable report.
     return build_report(scored, profile, jd, flags, settings)

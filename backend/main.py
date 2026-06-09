@@ -1,9 +1,11 @@
 """FastAPI app: serves the landing page and the /api/screen endpoint."""
 
+import re
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from auth import get_user_store
@@ -30,6 +32,12 @@ app.add_middleware(
 )
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+# Static assets (shared login/register JS). Pages themselves are served by routes.
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR / "static"), name="static")
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MIN_PASSWORD_LEN = 6
 
 
 # --- auth dependency -------------------------------------------------------
@@ -59,7 +67,33 @@ def login_page(request: Request):
     return FileResponse(FRONTEND_DIR / "login.html")
 
 
+@app.get("/register")
+def register_page(request: Request):
+    if request.session.get("user"):
+        return RedirectResponse(url="/", status_code=302)
+    return FileResponse(FRONTEND_DIR / "register.html")
+
+
 # --- auth API --------------------------------------------------------------
+
+@app.post("/api/auth/register")
+def register(request: Request, email: str = Form(...), password: str = Form(...)):
+    email = (email or "").strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+    if len(password or "") < MIN_PASSWORD_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {MIN_PASSWORD_LEN} characters.",
+        )
+    store = get_user_store(settings)
+    if store.has_user(email):
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+    store.add_user(email, password)
+    request.session["user"] = email          # auto-login after registration
+    log.info("Registered new user: %s", email)
+    return {"ok": True, "email": email}
+
 
 @app.post("/api/auth/login")
 def login(request: Request, email: str = Form(...), password: str = Form(...)):

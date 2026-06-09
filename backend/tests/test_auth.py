@@ -177,3 +177,73 @@ def test_session_isolated_between_clients(logged_in_client):
     # A separate client without the session cookie is not authenticated.
     other = TestClient(main.app)
     assert other.get("/api/auth/me").status_code == 401
+
+
+# --- registration / multiple users ----------------------------------------
+
+def test_registration_creates_account_and_logs_in(client):
+    r = client.post("/api/auth/register",
+                    data={"email": "newuser@example.com", "password": "secret123"})
+    assert r.status_code == 200
+    assert r.json()["email"] == "newuser@example.com"
+    # auto-logged-in after registering
+    assert client.get("/api/auth/me").json()["email"] == "newuser@example.com"
+    # password is stored hashed, not plaintext
+    store = auth.get_user_store(config.get_settings())
+    assert "secret123" not in store.users["newuser@example.com"]
+
+
+def test_registration_rejects_duplicate_email(client):
+    client.post("/api/auth/register",
+                data={"email": "dup@example.com", "password": "secret123"})
+    r = TestClient(main.app).post(
+        "/api/auth/register", data={"email": "dup@example.com", "password": "other123"}
+    )
+    assert r.status_code == 409
+
+
+def test_registration_validates_email_and_password(client):
+    bad_email = client.post("/api/auth/register",
+                            data={"email": "not-an-email", "password": "secret123"})
+    assert bad_email.status_code == 400
+    short_pw = client.post("/api/auth/register",
+                           data={"email": "ok@example.com", "password": "123"})
+    assert short_pw.status_code == 400
+
+
+def test_multiple_users_can_register_and_login_independently():
+    ca, cb = TestClient(main.app), TestClient(main.app)
+    assert ca.post("/api/auth/register",
+                   data={"email": "alice@example.com", "password": "alicepw1"}).status_code == 200
+    assert cb.post("/api/auth/register",
+                   data={"email": "bob@example.com", "password": "bobpw123"}).status_code == 200
+    # Fresh clients log in with their own credentials.
+    la, lb = TestClient(main.app), TestClient(main.app)
+    assert la.post("/api/auth/login",
+                   data={"email": "alice@example.com", "password": "alicepw1"}).status_code == 200
+    assert lb.post("/api/auth/login",
+                   data={"email": "bob@example.com", "password": "bobpw123"}).status_code == 200
+    assert la.get("/api/auth/me").json()["email"] == "alice@example.com"
+    assert lb.get("/api/auth/me").json()["email"] == "bob@example.com"
+    # Cross credentials fail.
+    assert la.post("/api/auth/login",
+                   data={"email": "bob@example.com", "password": "alicepw1"}).status_code == 401
+
+
+# --- auth must not change scoring ------------------------------------------
+
+def test_auth_does_not_change_scoring(logged_in_client):
+    from screening import clear_jd_cache, screen
+
+    # Score through the authenticated HTTP endpoint...
+    clear_jd_cache()
+    r = logged_in_client.post("/api/screen", data={"job_description": JD},
+                              files={"resume": ("r.txt", RESUME, "text/plain")})
+    assert r.status_code == 200
+    http_score = r.json()["score"]
+
+    # ...and through the pipeline directly (same mock provider). Must match.
+    clear_jd_cache()
+    rep = screen(JD, RESUME, settings=config.get_settings())
+    assert rep.score == http_score
+    assert http_score > 0  # and it's a real, non-zero score
