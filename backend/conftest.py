@@ -24,10 +24,19 @@ def embedder(settings):
 
 
 class FakeLLM:
-    """Stand-in LLM client that returns a preset extraction dict."""
+    """Stand-in LLM client that returns preset extraction dicts.
 
-    def __init__(self, payload: dict):
-        self.payload = payload
+    The pipeline calls the LLM twice — once for the resume (CandidateProfile)
+    and once for the job description (JobRequirements). This fake dispatches on
+    the requested response model so tests can supply both payloads.
+    """
 
-    def extract_json(self, system: str, user: str, schema: dict) -> dict:
-        return self.payload
+    def __init__(self, resume: dict | None = None, jd: dict | None = None):
+        self.resume = resume or {}
+        self.jd = jd or {}
+
+    def extract_json(self, system: str, user: str, response_model) -> dict:
+        name = getattr(response_model, "__name__", "")
+        if name == "JobRequirements":
+            return self.jd
+        return self.resume

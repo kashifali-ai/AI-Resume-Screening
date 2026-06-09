@@ -2,14 +2,14 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 
 from config import get_settings
 from llm_client import LLMError
 from logging_config import configure_logging, get_logger
 from resume_parser import EmptyResumeError, UnsupportedFileType, extract_text
-from screening import screen_resume
+from screening import screen
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -37,7 +37,13 @@ def health():
 
 
 @app.post("/api/screen")
-async def screen(resume: UploadFile = File(...)):
+async def screen_endpoint(
+    job_description: str = Form(...),
+    resume: UploadFile = File(...),
+):
+    if not job_description or not job_description.strip():
+        raise HTTPException(status_code=400, detail="Paste a job description.")
+
     data = await resume.read()
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
@@ -54,7 +60,7 @@ async def screen(resume: UploadFile = File(...)):
         raise HTTPException(status_code=422, detail=str(e))
 
     try:
-        report = screen_resume(text, settings=settings)
+        report = screen(job_description, text, settings=settings)
     except LLMError as e:
         log.error("LLM failure: %s", e)
         raise HTTPException(status_code=503, detail=str(e))

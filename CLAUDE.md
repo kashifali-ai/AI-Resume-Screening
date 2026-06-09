@@ -4,33 +4,37 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-Resume Screening web app. A landing page with a single upload button lets a user
-upload any resume; the backend screens it against a built-in **SDE** role and
-returns an explainable **FIT / UNFIT** report with a score.
+Resume vs Job-Description screening web app. A split-screen landing page lets a
+user paste **any job description** (left) and upload **any resume** (right); the
+backend evaluates the resume against *that JD* and returns an explainable
+**FIT / UNFIT** report with a score.
 
-It is a **hybrid LLM + embeddings + deterministic-scoring** system, not a keyword
-matcher. **Google Gemini** only extracts structured data; embeddings do semantic
-skill matching; **Python computes the score and verdict deterministically — the
-verdict is never taken from the LLM.**
+There is **no built-in role**. The role and all its requirements come from the
+pasted JD. It is a **hybrid LLM + embeddings + deterministic-scoring** system,
+not a keyword matcher. **Google Gemini** only extracts structured data (from both
+the resume and the JD); embeddings do semantic skill matching; **Python computes
+the score and verdict deterministically — the verdict is never taken from the
+LLM.**
 
 ## Tech Stack
 
 - Backend: Python + FastAPI (`backend/`)
-- Frontend: HTML + Tailwind CDN (`frontend/index.html`)
+- Frontend: HTML + Tailwind CDN (`frontend/index.html`) — split-screen JD + resume
 - LLM: **Google Gemini** (`GEMINI_API_KEY`), abstracted in `llm_client.py`
 - Embeddings: `sentence-transformers/all-MiniLM-L6-v2` (local)
 
 ## Pipeline (stage → file)
 
 1. Parse — `resume_parser.py` (PDF/DOCX incl. tables/TXT; raises on empty/image-only)
-2. Extract — `extraction.py` + `llm_client.py` (Gemini `response_schema`) → `CandidateProfile` (extract-only)
+2. Extract — `extraction.py` + `llm_client.py` (Gemini `response_schema`) →
+   `CandidateProfile` (resume) and `JobRequirements` (JD), both extract-only
 3. Normalize / anti-gaming — `normalize.py` (dedup, evidence confidence, stuffing, missing sections)
-4. Semantic match — `semantic.py` (embedding cosine vs `role_profile.py` skills)
-5. Score + verdict — `scoring.py` (pure Python, deterministic)
-6. Report — `report.py` (grounded strengths/weaknesses/recommendation/reasoning)
+4. Semantic match — `semantic.py` (embedding cosine: JD skills vs candidate skills)
+5. Score + verdict — `scoring.py` (pure Python, deterministic; JD-derived weights + experience window)
+6. Report — `report.py` (grounded strengths/weaknesses/recommendations/reasoning)
 
-Orchestrated by `screening.py::screen_resume`, which accepts injectable
-`settings` / `llm` / `embedder` so tests can run without Ollama.
+Orchestrated by `screening.py::screen(jd_text, resume_text)`, which accepts
+injectable `settings` / `llm` / `embedder` so tests can run without calling Gemini.
 
 ## Setup & Commands
 
@@ -47,12 +51,15 @@ pytest -q                        # LLM mocked; embeddings + scoring run for real
 
 - **The LLM extracts; Python decides.** Never let the verdict/score come from the
   model. Keep `scoring.py` deterministic and free of model calls.
+- **No hardcoded role.** Requirements (skills/experience/role title) come only
+  from the pasted JD via `JobRequirements`. Do not reintroduce a fixed skill list
+  or role profile.
 - **No keyword/regex skill detection.** Skill equivalence is embedding-based in
   `semantic.py`. Do not reintroduce substring matching for skills.
 - **All tunables in `config.py`** (env-overridable). Don't hardcode thresholds,
   weights, model names, or limits in logic.
-- To retarget to another role, edit `role_profile.py` (weighted skills) only.
-- Tests mock the LLM via `conftest.FakeLLM`; the embedder is a session fixture.
+- Tests mock the LLM via `conftest.FakeLLM` (dispatches resume vs JD by response
+  model); the embedder is a session fixture.
 
 ## Notes
 

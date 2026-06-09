@@ -45,31 +45,37 @@ class Embedder:
         return ea @ eb.T  # vectors are normalized -> dot product == cosine
 
 
-def match_required_skills(
-    required: list[str],
+def match_skills(
+    requirements: list[dict],
     candidate_skills: list[str],
     embedder: Embedder,
     threshold: float,
 ) -> list[dict]:
-    """For each required skill, find the best-matching candidate skill.
+    """For each job requirement, find the best-matching candidate skill.
 
-    Returns a list of dicts: {required, matched_to, similarity, matched}.
+    `requirements` is a list of {"skill", "kind", "weight"} dicts derived from
+    the job description (not a hardcoded role). Returns each enriched with
+    {required, matched_to, similarity, matched}.
     """
+    skills = [r["skill"] for r in requirements]
+
     if not candidate_skills:
         return [
-            {"required": r, "matched_to": None, "similarity": 0.0, "matched": False}
-            for r in required
+            {**r, "required": r["skill"], "matched_to": None,
+             "similarity": 0.0, "matched": False}
+            for r in requirements
         ]
 
-    sims = embedder.similarity_matrix(required, candidate_skills)
+    sims = embedder.similarity_matrix(skills, candidate_skills)
     results = []
-    for i, req in enumerate(required):
+    for i, req in enumerate(requirements):
         best_j = int(np.argmax(sims[i]))
         best_sim = float(sims[i][best_j])
         matched = best_sim >= threshold
         results.append(
             {
-                "required": req,
+                **req,
+                "required": req["skill"],
                 "matched_to": candidate_skills[best_j] if matched else None,
                 "similarity": round(best_sim, 4),
                 "matched": matched,

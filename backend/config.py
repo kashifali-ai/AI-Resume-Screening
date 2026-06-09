@@ -25,10 +25,12 @@ class Settings(BaseSettings):
     dedup_threshold: float = 0.85        # cosine >= this collapses duplicate skills
 
     # --- Scoring / verdict ---
+    # The role and its required skills/experience come entirely from the pasted
+    # job description — nothing role-specific is hardcoded here.
     fit_threshold: float = 60.0          # overall score >= this -> FIT
-    min_experience: float = 1.0
-    max_experience: float = 5.0
-    overqualified_factor: float = 0.9    # multiplier when exp > max_experience
+    required_skill_weight: float = 1.0   # weight of a JD "required" skill
+    preferred_skill_weight: float = 0.5  # weight of a JD "preferred"/nice-to-have skill
+    overqualified_factor: float = 0.9    # multiplier when exp exceeds the JD's max
     evidence_confidence: float = 0.5     # confidence for a skill with no supporting text
 
     # --- Anti keyword-stuffing ---
@@ -39,7 +41,8 @@ class Settings(BaseSettings):
 
     # --- I/O ---
     max_file_mb: int = 5
-    max_resume_chars: int = 40_000       # cap text sent to the LLM
+    max_resume_chars: int = 40_000       # cap resume text sent to the LLM
+    max_jd_chars: int = 20_000           # cap job-description text sent to the LLM
     log_level: str = "INFO"
 
 
