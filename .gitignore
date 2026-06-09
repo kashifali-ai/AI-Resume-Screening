@@ -1,5 +1,7 @@
 .env
 .venv/
+backend/users.json
+users.json
 __pycache__/
 *.pyc
 .vscode/

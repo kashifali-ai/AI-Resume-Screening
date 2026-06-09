@@ -9,6 +9,14 @@
 <body class="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 text-slate-800">
   <div class="max-w-6xl mx-auto px-4 py-8">
 
+    <nav class="flex items-center justify-end gap-3 mb-2 text-sm">
+      <span class="text-slate-500">Signed in as
+        <span id="userEmail" class="font-medium text-slate-700"></span></span>
+      <button id="logoutBtn"
+        class="border border-slate-300 text-slate-600 hover:bg-slate-100 rounded-lg px-3 py-1.5
+               font-medium transition">Log out</button>
+    </nav>
+
     <header class="text-center mb-8">
       <h1 class="text-3xl sm:text-4xl font-bold text-slate-900">
         Job<span class="text-indigo-600">Fit</span>
@@ -188,6 +196,30 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
+
+    // --- auth guard: must be logged in to view the dashboard ---
+    (async function guard() {
+      try {
+        const r = await fetch("/api/auth/me");
+        if (!r.ok) { window.location.href = "/login"; return; }
+        const d = await r.json();
+        $("userEmail").textContent = d.email;
+      } catch {
+        window.location.href = "/login";
+      }
+    })();
+
+    $("logoutBtn").addEventListener("click", async () => {
+      try { await fetch("/api/auth/logout", { method: "POST" }); } catch {}
+      window.location.href = "/login";
+    });
+
+    // If a protected call returns 401 (session expired), bounce to login.
+    const requireAuth = (res) => {
+      if (res.status === 401) { window.location.href = "/login"; return false; }
+      return true;
+    };
+
     const jdInput = $("jdInput"), fileInput = $("fileInput"), dropZone = $("dropZone");
     const analyzeBtn = $("analyzeBtn"), loading = $("loading"), errorEl = $("error");
     const result = $("result"), bulkResult = $("bulkResult");
@@ -237,6 +269,7 @@
           fd.append("job_description", jdInput.value);
           fd.append("resume", selectedFiles[0]);
           const res = await fetch("/api/screen", { method: "POST", body: fd });
+          if (!requireAuth(res)) return;
           const data = await res.json();
           if (!res.ok) throw new Error(data.detail || "Analysis failed.");
           render(data);
@@ -246,6 +279,7 @@
           fd.append("job_description", jdInput.value);
           selectedFiles.forEach(f => fd.append("resumes", f));
           const res = await fetch("/api/screen-bulk", { method: "POST", body: fd });
+          if (!requireAuth(res)) return;
           const data = await res.json();
           if (!res.ok) throw new Error(data.detail || "Analysis failed.");
           renderBulk(data);

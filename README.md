@@ -40,6 +40,43 @@ Works for Software Engineer, Backend/Frontend Developer, Data Analyst, Data
 Engineer, Product Manager, QA Engineer, DevOps Engineer, or any other role —
 because the requirements are read from the JD, not hardcoded.
 
+## Login / authentication
+
+The whole app sits behind a login screen — you must sign in before any screening
+feature is reachable.
+
+**Demo account** (seeded automatically on first run):
+
+| Email | Password |
+|-------|----------|
+| `admin@test.com` | `admin123` |
+
+- Visiting any page while logged out redirects to **`/login`**.
+- Sign in with email + password → redirected to the JobFit dashboard, where all
+  features work (single screening, bulk screening, CSV export, MockLLM and Gemini
+  modes).
+- **Log out** (top-right) clears the session; protected APIs return `401` again.
+
+**How it works**
+- **Session-based auth** via a signed cookie (Starlette `SessionMiddleware` +
+  `itsdangerous`); the cookie only holds the user's email.
+- Passwords are hashed with **PBKDF2-HMAC-SHA256** + a per-user random salt
+  (`auth.py`) and stored in `users.json` (gitignored) — **plaintext is never
+  stored**.
+- Protected endpoints (`/api/screen`, `/api/screen-bulk`, and the bulk CSV
+  export they serve) require a valid session via a `current_user` dependency and
+  return `401` otherwise. `/api/auth/login`, `/api/auth/logout`, `/api/auth/me`
+  manage the session; `/api/health` stays public (status only, no data).
+
+**Config** (env-overridable, in `config.py`): `SESSION_SECRET` (set a strong
+value in production), `SESSION_COOKIE`, `USERS_DB`, `DEMO_EMAIL`, `DEMO_PASSWORD`.
+
+```bash
+# Add a user from a shell (after activating the venv, from backend/):
+python -c "from auth import get_user_store; from config import get_settings; \
+get_user_store(get_settings()).add_user('you@example.com','your-password')"
+```
+
 ## Bulk screening (one JD → many resumes)
 
 The same job description is often screened against dozens of resumes. To avoid
@@ -115,7 +152,8 @@ MOCK_LLM=true uvicorn main:app --reload     # then upload many resumes in the UI
 | 5. Score | `scoring.py` | pure-Python deterministic score + FIT/UNFIT verdict |
 | 6. Report | `report.py` | grounded strengths/weaknesses/recommendations/reasoning |
 | — Orchestrate | `screening.py` | `get_requirements()` (JD-cached), `screen()` (single), `screen_bulk()` (many, ranked); injectable `settings`/`llm`/`embedder` |
-| — API | `main.py` | `POST /api/screen` (single), `POST /api/screen-bulk` (many), `GET /api/health` |
+| — Auth | `auth.py` + `main.py` | PBKDF2 password hashing, JSON user store, session cookie, `current_user` gate |
+| — API | `main.py` | `POST /api/screen` (single), `POST /api/screen-bulk` (many) — both login-gated; auth + `GET /api/health` public |
 
 ### JD caching (how it works)
 
@@ -175,7 +213,17 @@ uvicorn main:app --reload                # http://127.0.0.1:8000
 ```
 First request loads the embedding model (~90 MB) once.
 
+Open http://127.0.0.1:8000 and sign in with the demo account
+**`admin@test.com` / `admin123`** (see [Login / authentication](#login--authentication)).
+
 ## API
+
+All `/api/screen*` endpoints require an authenticated session (else `401`).
+
+### Auth
+- `POST /api/auth/login` — form `email`, `password` → sets session cookie.
+- `POST /api/auth/logout` — clears the session.
+- `GET /api/auth/me` — current user, or `401`.
 
 ### `POST /api/screen` — single resume (`multipart/form-data`)
 - `job_description` (text, required)
@@ -232,6 +280,7 @@ my-project/
 │   ├── config.py          # pydantic-settings config (env-overridable)
 │   ├── models.py          # CandidateProfile, JobRequirements, ScreeningReport, BulkScreeningResponse, ...
 │   ├── resume_parser.py   # PDF/DOCX(+tables)/TXT -> text
+│   ├── auth.py            # password hashing (PBKDF2) + JSON user store
 │   ├── llm_client.py      # provider abstraction (Gemini; MockLLM when MOCK_LLM=true)
 │   ├── mock_llm.py        # offline rule-based extraction provider (no Gemini)
 │   ├── report_csv.py      # bulk results -> CSV
@@ -245,7 +294,8 @@ my-project/
 │   ├── tests/             # pytest suite
 │   └── requirements.txt
 └── frontend/
-    └── index.html         # split-screen JD + resume UI
+    ├── login.html         # login screen (first page)
+    └── index.html         # split-screen JD + resume dashboard (login-gated)
 ```
 
 ## Limitations (honest)

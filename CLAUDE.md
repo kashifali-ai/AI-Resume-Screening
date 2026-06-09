@@ -19,7 +19,11 @@ LLM.**
 ## Tech Stack
 
 - Backend: Python + FastAPI (`backend/`)
-- Frontend: HTML + Tailwind CDN (`frontend/index.html`) — split-screen JD + resume
+- Frontend: HTML + Tailwind CDN — `frontend/login.html` (login gate) +
+  `frontend/index.html` (split-screen JD + resume dashboard)
+- Auth: session cookie (Starlette `SessionMiddleware`) + PBKDF2 password hashing
+  in `auth.py`; `/api/screen*` are gated by a `current_user` dependency. Demo
+  account `admin@test.com` / `admin123` is seeded into `users.json` (gitignored).
 - LLM: **Google Gemini** (`GEMINI_API_KEY`), abstracted in `llm_client.py`.
   `MOCK_LLM=true` swaps in an offline rule-based provider (`mock_llm.py`) for
   extraction only — no Gemini calls/quota/key; matching & scoring are unchanged.

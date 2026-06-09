@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     stuffing_min_skills_for_check: int = 10
     stuffing_penalty_cap: float = 0.5
 
+    # --- Auth / sessions ---
+    session_secret: str = "dev-insecure-change-me"   # set SESSION_SECRET in prod
+    session_cookie: str = "jobfit_session"
+    users_db: str = "users.json"                      # user store path (gitignored)
+    demo_email: str = "admin@test.com"               # seeded on first run
+    demo_password: str = "admin123"
+
     # --- I/O ---
     max_file_mb: int = 5
     max_resume_chars: int = 40_000       # cap resume text sent to the LLM

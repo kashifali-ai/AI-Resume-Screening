@@ -2,9 +2,11 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile, HTTPException
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
 
+from auth import get_user_store
 from config import get_settings
 from llm_client import LLMError
 from logging_config import configure_logging, get_logger
@@ -16,14 +18,72 @@ settings = get_settings()
 configure_logging(settings.log_level)
 log = get_logger(__name__)
 
-app = FastAPI(title="Resume Screening (LLM + Embeddings)")
+app = FastAPI(title="JobFit — Resume Screening (LLM + Embeddings)")
+
+# Signed session cookie (Starlette/itsdangerous). Stores only the user's email.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret,
+    session_cookie=settings.session_cookie,
+    same_site="lax",
+    https_only=False,  # set True behind HTTPS in production
+)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 
+# --- auth dependency -------------------------------------------------------
+
+def current_user(request: Request) -> str:
+    """Require a logged-in session; otherwise 401. Used to gate feature APIs."""
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated. Please log in.")
+    return user
+
+
+# --- pages -----------------------------------------------------------------
+
 @app.get("/")
-def landing_page():
+def landing_page(request: Request):
+    # The dashboard is gated: no session -> go to the login screen first.
+    if not request.session.get("user"):
+        return RedirectResponse(url="/login", status_code=302)
     return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@app.get("/login")
+def login_page(request: Request):
+    if request.session.get("user"):
+        return RedirectResponse(url="/", status_code=302)
+    return FileResponse(FRONTEND_DIR / "login.html")
+
+
+# --- auth API --------------------------------------------------------------
+
+@app.post("/api/auth/login")
+def login(request: Request, email: str = Form(...), password: str = Form(...)):
+    store = get_user_store(settings)
+    if store.verify(email, password):
+        request.session["user"] = email.strip().lower()
+        log.info("Login success: %s", email.strip().lower())
+        return {"ok": True, "email": email.strip().lower()}
+    log.info("Login failed: %s", (email or "").strip().lower())
+    raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request):
+    request.session.clear()
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    return {"email": user}
 
 
 @app.get("/api/health")
@@ -42,6 +102,7 @@ def health():
 async def screen_endpoint(
     job_description: str = Form(...),
     resume: UploadFile = File(...),
+    user: str = Depends(current_user),
 ):
     if not job_description or not job_description.strip():
         raise HTTPException(status_code=400, detail="Paste a job description.")
@@ -80,6 +141,7 @@ async def screen_bulk_endpoint(
     job_description: str = Form(...),
     resumes: list[UploadFile] = File(...),
     response_format: str = Form("json"),  # "json" (default) or "csv"
+    user: str = Depends(current_user),
 ):
     """Evaluate many resumes against ONE job description. The JD is extracted
     once (cached); each resume is screened independently and results are ranked
