@@ -20,7 +20,9 @@ LLM.**
 
 - Backend: Python + FastAPI (`backend/`)
 - Frontend: HTML + Tailwind CDN (`frontend/index.html`) — split-screen JD + resume
-- LLM: **Google Gemini** (`GEMINI_API_KEY`), abstracted in `llm_client.py`
+- LLM: **Google Gemini** (`GEMINI_API_KEY`), abstracted in `llm_client.py`.
+  `MOCK_LLM=true` swaps in an offline rule-based provider (`mock_llm.py`) for
+  extraction only — no Gemini calls/quota/key; matching & scoring are unchanged.
 - Embeddings: `sentence-transformers/all-MiniLM-L6-v2` (local)
 
 ## Pipeline (stage → file)
@@ -58,7 +60,9 @@ pytest -q                        # LLM mocked; embeddings + scoring run for real
   from the pasted JD via `JobRequirements`. Do not reintroduce a fixed skill list
   or role profile.
 - **No keyword/regex skill detection.** Skill equivalence is embedding-based in
-  `semantic.py`. Do not reintroduce substring matching for skills.
+  `semantic.py`. Do not reintroduce substring matching for skills. (The MockLLM's
+  rule-based parsing lives in `mock_llm.py` and only emulates LLM *extraction* —
+  never the matching stage.)
 - **All tunables in `config.py`** (env-overridable). Don't hardcode thresholds,
   weights, model names, or limits in logic.
 - Tests mock the LLM via `conftest.FakeLLM` (dispatches resume vs JD by response

@@ -60,12 +60,56 @@ a table **ranked by score (highest first)** with a **Download CSV** button.
 Each ranked row shows: candidate name, match score, FIT/UNFIT, matched-skill
 count, missing-skill count, experience, and recommendation.
 
+## MockLLM mode (offline, zero Gemini calls)
+
+For testing, demos, and CI you can run the **entire** pipeline — including bulk
+screening of up to 50 resumes — without calling Gemini at all.
+
+**Enable it** (one of):
+```bash
+# .env  (or export before launching)
+MOCK_LLM=true
+```
+When `MOCK_LLM=true`:
+- **No Gemini calls, no quota used, no `GEMINI_API_KEY` required.**
+- A deterministic, rule-based `MockLLMClient` (`mock_llm.py`) replaces Gemini for
+  **both** resume and JD extraction:
+  - *Resume →* `CandidateProfile` parsed from the resume's own sections (name,
+    email, summary, skills/technologies, dated experience, projects, education,
+    certifications).
+  - *JD →* `JobRequirements` parsed from the JD (role title, required/preferred
+    skills, technologies, `N+`/`N-M years`, education, responsibilities).
+- It logs `[MOCK_LLM] Resume extracted`, `[MOCK_LLM] JD extracted`, and
+  `[MOCK_LLM] No Gemini call performed`.
+
+**Everything else is identical.** Only the extraction provider changes — the
+normalization, **embedding-based** semantic matching, deterministic Python
+scoring, ranking, and report generation are unchanged. (The mock's rule-based
+parsing is confined to *extraction*; skill *matching* is still done by embeddings
+in `semantic.py`, never by substring rules.)
+
+**When `MOCK_LLM=false` (default), Gemini is used exactly as before.**
+
+| | `MOCK_LLM=true` (mock) | `MOCK_LLM=false` (Gemini) |
+|---|---|---|
+| Extraction | rule-based, offline | Google Gemini structured output |
+| API key / quota | none needed | `GEMINI_API_KEY` required, uses quota |
+| Determinism | fully deterministic | near-deterministic (`temperature=0`) |
+| Extraction quality | good on clearly-sectioned text; weaker on messy/freeform resumes | strong on messy, real-world resumes |
+| Best for | tests, demos, CI, bulk dry-runs | production screening |
+| Matching & scoring | **identical** (embeddings + Python) | **identical** (embeddings + Python) |
+
+```bash
+# Demo bulk screening with no Gemini at all:
+MOCK_LLM=true uvicorn main:app --reload     # then upload many resumes in the UI
+```
+
 ## Architecture (stage → file)
 
 | Stage | File | Responsibility |
 |------|------|----------------|
 | 1. Parse | `resume_parser.py` | PDF/DOCX(+tables)/TXT → text; raises on empty/image-only |
-| 2. Extract | `extraction.py` + `llm_client.py` | Gemini structured output → `CandidateProfile` and `JobRequirements` (extract-only) |
+| 2. Extract | `extraction.py` + `llm_client.py` (+ `mock_llm.py`) | Gemini structured output → `CandidateProfile` and `JobRequirements` (extract-only); `MockLLMClient` provides the same shapes offline when `MOCK_LLM=true` |
 | 3. Normalize | `normalize.py` | dedup, evidence confidence, anti-stuffing, missing-section flags |
 | 4. Match | `semantic.py` | embedding cosine between JD skills and candidate skills |
 | 5. Score | `scoring.py` | pure-Python deterministic score + FIT/UNFIT verdict |
@@ -146,6 +190,7 @@ Returns the full `ScreeningReport` JSON: `verdict`, `role_title`, `score`,
 ### `POST /api/screen-bulk` — many resumes (`multipart/form-data`)
 - `job_description` (text, required)
 - `resumes` (repeated file field, 1–50 files)
+- `response_format` (optional: `json` default, or `csv` for a downloadable CSV)
 
 Returns a `BulkScreeningResponse`: `role_title`, `job_requirements`, `jd_cached`
 (was the JD served from cache — i.e. Gemini was *not* called for it),
@@ -168,7 +213,9 @@ Covers multiple roles (Backend, Data Analyst, Product Manager, DevOps), semantic
 synonym matching, missing skills, experience boundaries (incl. "no requirement"),
 preferred-vs-required weighting, verdict determinism, and **bulk + JD caching**
 (`test_bulk.py`: JD extracted exactly once for N resumes, cross-request cache
-hit, ranking order, per-resume failure isolation).
+hit, ranking order, per-resume failure isolation). `test_mock_llm.py` covers the
+offline **MockLLM** path: rule-based JD/resume extraction, a full 50-resume bulk
+run with **zero Gemini calls**, ranking, and CSV export.
 
 ## Configuration
 All tunables live in `backend/config.py` and are overridable via env vars or a
@@ -185,7 +232,9 @@ my-project/
 │   ├── config.py          # pydantic-settings config (env-overridable)
 │   ├── models.py          # CandidateProfile, JobRequirements, ScreeningReport, BulkScreeningResponse, ...
 │   ├── resume_parser.py   # PDF/DOCX(+tables)/TXT -> text
-│   ├── llm_client.py      # provider abstraction (Google Gemini)
+│   ├── llm_client.py      # provider abstraction (Gemini; MockLLM when MOCK_LLM=true)
+│   ├── mock_llm.py        # offline rule-based extraction provider (no Gemini)
+│   ├── report_csv.py      # bulk results -> CSV
 │   ├── extraction.py      # LLM structured extraction: resume + JD (extract-only)
 │   ├── normalize.py       # dedup, evidence grounding, anti-stuffing
 │   ├── semantic.py        # sentence-transformers skill matching

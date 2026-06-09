@@ -89,6 +89,11 @@ class GeminiClient:
 
 
 def get_llm_client(settings: Settings) -> LLMClient:
+    # MOCK_LLM short-circuits everything: no Gemini, no quota, no API key needed.
+    if settings.mock_llm:
+        from mock_llm import MockLLMClient
+
+        return MockLLMClient(settings)
     provider = settings.llm_provider.lower()
     if provider == "gemini":
         return GeminiClient(settings)

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     llm_provider: str = "gemini"
     gemini_api_key: str = ""                 # from env GEMINI_API_KEY
     gemini_model: str = "gemini-2.5-flash"   # override via env GEMINI_MODEL
+    # When true, a deterministic rule-based MockLLM replaces Gemini for BOTH
+    # resume and JD extraction — no Gemini calls, no quota, no API key needed.
+    # When false, Gemini is used exactly as before.
+    mock_llm: bool = False                    # set MOCK_LLM=true to enable
 
     # --- Embeddings (semantic skill matching) ---
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"

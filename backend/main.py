@@ -3,11 +3,12 @@
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from config import get_settings
 from llm_client import LLMError
 from logging_config import configure_logging, get_logger
+from report_csv import bulk_to_csv
 from resume_parser import EmptyResumeError, UnsupportedFileType, extract_text
 from screening import screen, screen_bulk
 
@@ -29,8 +30,9 @@ def landing_page():
 def health():
     return {
         "status": "ok",
-        "llm_provider": settings.llm_provider,
-        "llm_model": settings.gemini_model,
+        "mock_llm": settings.mock_llm,
+        "llm_provider": "mock" if settings.mock_llm else settings.llm_provider,
+        "llm_model": "mock-rule-based" if settings.mock_llm else settings.gemini_model,
         "gemini_key_configured": bool(settings.gemini_api_key),
         "embedding_model": settings.embedding_model,
     }
@@ -77,6 +79,7 @@ async def screen_endpoint(
 async def screen_bulk_endpoint(
     job_description: str = Form(...),
     resumes: list[UploadFile] = File(...),
+    response_format: str = Form("json"),  # "json" (default) or "csv"
 ):
     """Evaluate many resumes against ONE job description. The JD is extracted
     once (cached); each resume is screened independently and results are ranked
@@ -121,4 +124,11 @@ async def screen_bulk_endpoint(
         log.exception("Bulk screening failed")
         raise HTTPException(status_code=500, detail=f"Bulk screening failed: {e}")
 
+    if response_format.lower() == "csv":
+        role = (response.role_title or "results").replace(" ", "_")
+        return PlainTextResponse(
+            bulk_to_csv(response),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="screening_{role}.csv"'},
+        )
     return response.model_dump()
