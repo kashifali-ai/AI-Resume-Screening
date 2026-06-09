@@ -33,8 +33,11 @@ LLM.**
 5. Score + verdict — `scoring.py` (pure Python, deterministic; JD-derived weights + experience window)
 6. Report — `report.py` (grounded strengths/weaknesses/recommendations/reasoning)
 
-Orchestrated by `screening.py::screen(jd_text, resume_text)`, which accepts
-injectable `settings` / `llm` / `embedder` so tests can run without calling Gemini.
+Orchestrated by `screening.py`: `screen(jd_text, resume_text)` (single) and
+`screen_bulk(jd_text, resumes)` (many, ranked), both via `get_requirements()`
+which **caches extracted `JobRequirements` by JD text** so one JD costs one Gemini
+call across a whole batch. All accept injectable `settings` / `llm` / `embedder`
+so tests run without calling Gemini. `clear_jd_cache()` resets the cache.
 
 ## Setup & Commands
 

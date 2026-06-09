@@ -9,7 +9,7 @@ from config import get_settings
 from llm_client import LLMError
 from logging_config import configure_logging, get_logger
 from resume_parser import EmptyResumeError, UnsupportedFileType, extract_text
-from screening import screen
+from screening import screen, screen_bulk
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -71,3 +71,54 @@ async def screen_endpoint(
         raise HTTPException(status_code=500, detail=f"Screening failed: {e}")
 
     return report.model_dump()
+
+
+@app.post("/api/screen-bulk")
+async def screen_bulk_endpoint(
+    job_description: str = Form(...),
+    resumes: list[UploadFile] = File(...),
+):
+    """Evaluate many resumes against ONE job description. The JD is extracted
+    once (cached); each resume is screened independently and results are ranked
+    by score, highest first."""
+    if not job_description or not job_description.strip():
+        raise HTTPException(status_code=400, detail="Paste a job description.")
+    if not resumes:
+        raise HTTPException(status_code=400, detail="Upload at least one resume.")
+    if len(resumes) > settings.max_bulk_resumes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many resumes ({len(resumes)}). "
+                   f"Max {settings.max_bulk_resumes} per request.",
+        )
+
+    parsed: list[tuple[str, str]] = []
+    prefailed: list[tuple[str, str]] = []
+    for f in resumes:
+        name = f.filename or "resume"
+        data = await f.read()
+        if not data:
+            prefailed.append((name, "The uploaded file is empty."))
+            continue
+        if len(data) > settings.max_file_mb * 1024 * 1024:
+            prefailed.append((name, f"File too large (max {settings.max_file_mb} MB)."))
+            continue
+        try:
+            parsed.append((name, extract_text(name, data)))
+        except (UnsupportedFileType, EmptyResumeError) as e:
+            prefailed.append((name, str(e)))
+
+    try:
+        response = screen_bulk(
+            job_description, parsed, prefailed=prefailed, settings=settings
+        )
+    except LLMError as e:
+        log.error("LLM failure: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — surface anything else cleanly
+        log.exception("Bulk screening failed")
+        raise HTTPException(status_code=500, detail=f"Bulk screening failed: {e}")
+
+    return response.model_dump()

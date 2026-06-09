@@ -40,6 +40,26 @@ Works for Software Engineer, Backend/Frontend Developer, Data Analyst, Data
 Engineer, Product Manager, QA Engineer, DevOps Engineer, or any other role —
 because the requirements are read from the JD, not hardcoded.
 
+## Bulk screening (one JD → many resumes)
+
+The same job description is often screened against dozens of resumes. To avoid
+re-paying for JD extraction every time, the extracted `JobRequirements` (and its
+embedding-built weighted requirement list) are **cached by JD text**:
+
+- The first time a JD is seen, Gemini extracts it **once** and the result is cached.
+- Every subsequent resume for that JD — in the same batch *or* a later request —
+  **reuses the cache and does not call Gemini for the JD again**.
+- Each resume is still extracted individually (they differ), screened
+  independently (one bad file never aborts the batch), and the deterministic
+  Python scoring is **unchanged**.
+
+So screening *N* resumes against one JD costs **1 JD Gemini call + N resume
+calls**, not *N* + *N*. Upload up to **50 resumes** at once; results come back as
+a table **ranked by score (highest first)** with a **Download CSV** button.
+
+Each ranked row shows: candidate name, match score, FIT/UNFIT, matched-skill
+count, missing-skill count, experience, and recommendation.
+
 ## Architecture (stage → file)
 
 | Stage | File | Responsibility |
@@ -50,8 +70,18 @@ because the requirements are read from the JD, not hardcoded.
 | 4. Match | `semantic.py` | embedding cosine between JD skills and candidate skills |
 | 5. Score | `scoring.py` | pure-Python deterministic score + FIT/UNFIT verdict |
 | 6. Report | `report.py` | grounded strengths/weaknesses/recommendations/reasoning |
-| — Orchestrate | `screening.py::screen(jd_text, resume_text)` | wires the stages; injectable `settings`/`llm`/`embedder` |
-| — API | `main.py` | `POST /api/screen` (JD text + resume file), `GET /api/health` |
+| — Orchestrate | `screening.py` | `get_requirements()` (JD-cached), `screen()` (single), `screen_bulk()` (many, ranked); injectable `settings`/`llm`/`embedder` |
+| — API | `main.py` | `POST /api/screen` (single), `POST /api/screen-bulk` (many), `GET /api/health` |
+
+### JD caching (how it works)
+
+`screening.py` keeps a process-level cache keyed by `sha256(jd_text)`:
+`get_requirements(jd_text, …)` returns `(JobRequirements, weighted_requirements,
+cached)`. On a cache hit the LLM is **not** called. Both `screen()` and
+`screen_bulk()` go through it, so single and bulk runs share the same cache.
+`clear_jd_cache()` empties it (used by tests). The cache is in-memory per process
+(resets on restart); swap in Redis/etc. behind `get_requirements` if you need it
+shared or persistent.
 
 ### How Gemini is used (extract-only)
 
@@ -82,7 +112,8 @@ Same inputs always produce the same verdict. The LLM cannot change it.
 ## Stack
 - **Backend:** Python + FastAPI (modular pipeline, logging, config, tests)
 - **Frontend:** HTML + Tailwind — split screen: JD textarea (left), resume upload
-  (right), **Analyze Match** button, full results panel.
+  (right, multi-select), **Analyze Match** button. One resume → full single
+  report; many → ranked table + **Download CSV** (built client-side).
 - **LLM:** **Google Gemini** — provider-abstracted in `llm_client.py`
 - **Embeddings:** `sentence-transformers/all-MiniLM-L6-v2` (runs locally)
 
@@ -101,7 +132,8 @@ uvicorn main:app --reload                # http://127.0.0.1:8000
 First request loads the embedding model (~90 MB) once.
 
 ## API
-`POST /api/screen` — `multipart/form-data`:
+
+### `POST /api/screen` — single resume (`multipart/form-data`)
 - `job_description` (text, required)
 - `resume` (file: PDF/DOCX/TXT, required)
 
@@ -111,7 +143,21 @@ Returns the full `ScreeningReport` JSON: `verdict`, `role_title`, `score`,
 `experience_years`, `experience_ok`, `experience_required`,
 `experience_comparison`, `candidate_resume`, `job_requirements`, `skill_matches`.
 
-Without a valid key / network, `/api/screen` returns **503** with a clear message.
+### `POST /api/screen-bulk` — many resumes (`multipart/form-data`)
+- `job_description` (text, required)
+- `resumes` (repeated file field, 1–50 files)
+
+Returns a `BulkScreeningResponse`: `role_title`, `job_requirements`, `jd_cached`
+(was the JD served from cache — i.e. Gemini was *not* called for it),
+`total` / `succeeded` / `failed`, and `results` — a list **ranked by score
+descending** of `BulkResumeResult` rows (`filename`, `ok`, `error`,
+`candidate_name`, `score`, `verdict`, `matched_count`, `missing_count`,
+`experience_years`, `recommendation`, full `report`). Failed/unreadable resumes
+appear as `ok=false` rows at the bottom rather than failing the whole batch.
+
+Without a valid key / network (or on Gemini rate limits), the endpoints return
+**503** with a clear message; in bulk mode a per-resume LLM failure becomes a
+failed row.
 
 ## Tests
 ```bash
@@ -120,13 +166,16 @@ pytest -q     # LLM is mocked; embeddings + scoring run for real
 ```
 Covers multiple roles (Backend, Data Analyst, Product Manager, DevOps), semantic
 synonym matching, missing skills, experience boundaries (incl. "no requirement"),
-preferred-vs-required weighting, and verdict determinism.
+preferred-vs-required weighting, verdict determinism, and **bulk + JD caching**
+(`test_bulk.py`: JD extracted exactly once for N resumes, cross-request cache
+hit, ranking order, per-resume failure isolation).
 
 ## Configuration
 All tunables live in `backend/config.py` and are overridable via env vars or a
 project-root `.env`: model names, similarity/FIT thresholds, required/preferred
-skill weights, overqualified factor, anti-stuffing limits, file-size cap, and
-the resume/JD character caps. Nothing role-specific is hardcoded.
+skill weights, overqualified factor, anti-stuffing limits, file-size cap, the
+resume/JD character caps, and `max_bulk_resumes` (default 50). Nothing
+role-specific is hardcoded.
 
 ## Project layout
 ```
@@ -134,7 +183,7 @@ my-project/
 ├── backend/
 │   ├── main.py            # FastAPI routes (JD + resume), logging, errors
 │   ├── config.py          # pydantic-settings config (env-overridable)
-│   ├── models.py          # CandidateProfile, JobRequirements, ScreeningReport, ...
+│   ├── models.py          # CandidateProfile, JobRequirements, ScreeningReport, BulkScreeningResponse, ...
 │   ├── resume_parser.py   # PDF/DOCX(+tables)/TXT -> text
 │   ├── llm_client.py      # provider abstraction (Google Gemini)
 │   ├── extraction.py      # LLM structured extraction: resume + JD (extract-only)
@@ -142,7 +191,7 @@ my-project/
 │   ├── semantic.py        # sentence-transformers skill matching
 │   ├── scoring.py         # deterministic score + verdict (no LLM)
 │   ├── report.py          # explainable report assembly
-│   ├── screening.py       # pipeline orchestrator: screen(jd, resume)
+│   ├── screening.py       # orchestrator: get_requirements (JD cache), screen, screen_bulk
 │   ├── conftest.py        # test fixtures (FakeLLM dispatches resume vs JD)
 │   ├── tests/             # pytest suite
 │   └── requirements.txt

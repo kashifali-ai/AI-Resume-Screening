@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     max_file_mb: int = 5
     max_resume_chars: int = 40_000       # cap resume text sent to the LLM
     max_jd_chars: int = 20_000           # cap job-description text sent to the LLM
+    max_bulk_resumes: int = 50           # max resumes in one bulk screening request
     log_level: str = "INFO"
 
 

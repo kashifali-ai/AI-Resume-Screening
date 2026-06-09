@@ -79,3 +79,38 @@ class ScreeningReport(BaseModel):
     candidate_resume: CandidateProfile
     job_requirements: JobRequirements
     skill_matches: list[SkillMatch]
+
+
+class BulkResumeResult(BaseModel):
+    """One row in a bulk screening run. Summary fields are filled for resumes
+    that screened successfully; `ok=False` rows carry an `error` instead."""
+
+    filename: str
+    ok: bool = True
+    error: Optional[str] = None
+    # summary (present when ok) — what the ranked table shows
+    candidate_name: Optional[str] = None
+    score: Optional[int] = None
+    verdict: Optional[Literal["FIT", "UNFIT"]] = None
+    matched_count: Optional[int] = None
+    missing_count: Optional[int] = None
+    experience_years: Optional[float] = None
+    recommendation: Optional[str] = None
+    # full report for drill-down (optional to keep payloads lean)
+    report: Optional[ScreeningReport] = None
+
+
+class BulkScreeningResponse(BaseModel):
+    """Result of evaluating many resumes against ONE job description.
+
+    The JD is extracted once; `jd_cached` reports whether those requirements were
+    served from the cache (i.e. Gemini was NOT called for the JD on this request).
+    `results` is ranked by score, highest first."""
+
+    role_title: str
+    job_requirements: JobRequirements
+    jd_cached: bool
+    total: int
+    succeeded: int
+    failed: int
+    results: list[BulkResumeResult]
